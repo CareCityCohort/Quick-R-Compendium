@@ -1,2 +1,4 @@
 # Quick-R-Compendium
-A compendium of short snippets of R code for data manipulation
+Here is a compendium of short snippets of R code that we have found handy for manipulating data in dataframes.
+
+This list will be added to on an ongoing basis.
