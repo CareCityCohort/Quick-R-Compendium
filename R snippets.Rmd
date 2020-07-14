@@ -1,0 +1,477 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+## R libraries for these functions and snippets
+
+* Note that order in which you import dplyr and plyr makes a difference!
+
+```{r}
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(readxl)
+library (magrittr)
+library(tidyverse)
+library(chron)
+library(zoo)
+library(stringr)
+library(janitor)
+library(lubridate)
+library(anytime)
+```
+
+## 1. A helper function to import a csv
+
+* This creates a column with a fixed value in a dataframe and specifies which strings to treat as NA
+
+```{r}
+# create csv helper function so can add column
+
+read_csv_filename <-function(filename, year) {
+    csv_help <- read.csv(file=filename, na.strings=c("", "n/a", "NULL", "NA"), stringsAsFactors=FALSE)
+    csv_help$max_year <- year
+    csv_help
+}
+
+
+# run the function as follows
+
+df <- read_csv_filename('C/Amber/Desktop/data.csv', 2018)
+```
+
+## 2. A function that checks if dataframes have the same field names and datatypes
+
+* This is useful if you want to append dataframes or maintain consistency between multiple similar dataframes, such as multiple years of the same dataset
+
+```{r}
+# check if column names and types are the same across all similar datasets
+
+check_df_fields <- function(dflist) {
+    
+    # takes a list of dataframes as input
+    # uses Janitor compare_df_cols_same to check if colnames and types are the same
+    
+    # a evaluates to TRUE or FALSE
+    a <- compare_df_cols_same(dflist, bind_method = "rbind")
+    
+    
+    # set b as 'same', this updates if not the same
+    b <- 'Same'
+    if (isFALSE(a)) {
+        
+    # if  the cols and types are not the same b is updated to a dataframe examining differences
+        b <- compare_df_cols(dflist, return = "mismatch", bind_method = "rbind")
+        }
+    return(b)
+        
+   }   
+
+
+# run as follows for list df_list
+
+# list
+df_list <- list(df=df, df1=df1, df2=df2)
+
+check_df_fields(df_list)
+```
+
+## 3. Build a helper function for basic data cleaning steps
+
+* You can add any additional operations in here
+
+
+* It requires a dataframe name and the format that date strings are in
+
+```{r}
+# clean up
+
+generic_clean_up <- function(df, dateformatstring) {
+    
+        # convert all column names to lower case
+        
+        names(df) <-tolower(names(df))
+    
+         # convert all date columns to date (for dataset with multiple date columns or one)
+        # for columns that have 'date' in title
+   
+    
+        if (is.null(ncol(df[,grepl ("^.+date|^+date|date",names(df))])) ){
+            df[,grepl ("^.+date|^+date|date",names(df))] <-as.Date(df[,grepl("^.+date|^+date|date",names(df))], format=dateformatstring)
+
+
+        } else {
+            #df[,grepl ("date",names(df))] <-as.Date(df[,grepl("date",names(df))], format="%d/%m/%Y")
+            df[,grepl ("^.+date|^+date|date",names(df))] <-lapply(df[,grepl("^.+date|^+date|date",names(df))], as.Date, format=dateformatstring)
+
+        }
+    
+            return(df)
+}
+ 
+
+
+# how to run
+df <-generic_clean_up(df, "%d/%m/%Y")
+
+# how to run on list of multiple dataframes, df_list
+
+df_list1 <-lapply(df_list, generic_clean_up)
+```
+
+## 4. Convert string column of month and year only to first or last day of month
+
+* format MMYYYY to first or last day of month
+
+```{r}
+# use zoo package for partial date and to convert to last day of month
+# get rid of frac=1 to convert to first day
+
+MMYYYY_date_convert <- function(df, column, first_or_last) {     
+    
+        a <- first_or_last    
+        df[[column]] = ifelse(is.na(df[[column]]), NA,
+            if_else(nchar(df[[column]])==5, paste0('0', df[[column]]), 
+                   as.character(df[[column]])))
+        
+        if (a == 'last') {
+            df[[column]] <-as.Date(as.yearmon(df[[column]], "%m%Y"), frac = 1)
+    }
+    
+        if (a == 'first') {
+                df[[column]] <-as.Date(as.yearmon(df[[column]], "%m%Y"))
+        }
+    
+        return(df)
+    }
+
+# how to use
+
+# fill in dataframe name, date_col name in MMYYYY format and 'first' or 'last' depending on whether you want to convert
+# to first of last day of month
+
+df <- MMYYYY_date_convert(df, 'date_col', 'last')
+```
+
+## 5. Assign dataframe names back after using lapply to operate on a list of them
+
+* After you have used lapply to apply a function to a list of dataframes, you will need to reassign the dataframe names back
+
+
+* In this example the original list was called df_list and the list you want to assign names back to is called df_list1
+
+```{r}
+# assign old dataframe names to new dataframes in the list
+for (i in 1:length(df_list)) {
+    assign(names(df_list)[[i]], df_list1[[i]])
+}
+```
+
+## 6. Using if_else to create a categorical column and then convert to factor
+
+* This example creates a column of bmi categories
+
+```{r}
+df$bmi_cat =if_else(df$age <19, 'Too young',
+            if_else(df$age>=19 & df$bmivalue <18.5, 'Underweight',
+            if_else(df$age>=19 & df$bmivalue >=18.5 & df$bmivalue <25, 'Healthy',
+            if_else(df$age>=19 & df$bmivalue >=25 & df$bmivalue <30, 'Overweight',       
+            if_else(df$age>=19 & df$bmivalue >=30 & df$bmivalue <40, 'Obese', 
+            if_else(df$age>=19 & df$bmivalue >=40, 'Morbidly obese',
+                   'Unknown'))))) )
+
+
+df$bmi_cat <- factor(df$bmi_cat, ordered=TRUE,
+                    levels =c("Underweight", "Healthy", "Overweight", "Obese", "Morbidly obese", "Unknown", "Too young"))
+```
+
+## 7. Creating an age group field based on defined breaks
+
+* This requires an integer column called 'age'
+
+```{r}
+agelabels <- c('Under 19', '19-49', '50-64', '65-74', '75-84', '85+')
+
+df$age_group <- cut(df$age, breaks= c(0, 18, 49, 64, 74, 85, 500), labels=agelabels, right=TRUE)    
+```
+
+## 8. Drop or keep dataframe columns by name
+
+```{r}
+# to drop columns by name
+
+df <- df[!names(df) %in% c("ID", "Age", "Results")]
+
+# to keep columns by name
+
+df <- df[names(df) %in% c("UniqueID", "PostCode", "Occupation")]
+```
+
+## 9. Rename multiple dataframe columns
+
+```{r}
+# put old names on the left and new names on the right
+
+ccg_rename_vector <- c('Ethnic.Origin'= 'ethnic_orig',
+                  'PersonAge'= 'age',
+                  'yearofbirth' = 'year_of_birth',
+                  'GPpracticecode' = 'practice_code',
+                  'GPpracticename' = 'practice_name',
+                  'Date.Of.Birth' = 'dob')
+                       
+
+# note that here we specify which library's rename function we are using, because dplyr also has one that works differently
+df <- plyr:::rename(df, ccg_rename_vector)
+```
+
+## 10. Drop duplicate rows
+
+```{r}
+# drop duplicates
+df <- distinct(df)
+```
+
+## 11. Filter dataframe for specific values
+
+* In this case we want to filter for people aged over 18
+
+```{r}
+df1 <- df %>% filter (df$age > 18)
+```
+
+## 12. Convert integer year to first day of year
+
+```{r}
+# convert integer year to first day of year
+df$birth_year <- as.Date(paste(df$birth_year, 1, 1, sep = "-"))
+```
+
+## 13. Recode a dataframe column based on value in other column
+
+* In this case, we recode the sex to Male, where the person_id = A12
+
+```{r}
+df$sex[df$person_id=='A12'] <- 'Male' 
+```
+
+## 14. Move a specific column to the start of a dataframe 
+
+* In this case, person_id
+
+```{r}
+df <- df %>% select(person_id, everything())
+```
+
+## 15. Change dataframe column order
+
+```{r}
+col_order <- c('person_id', 'age_group', 'year', 'test_result_1', 'visit_date')
+
+df <- df[, col_order]
+```
+
+## 16. Drop multiple rows based on column values
+
+```{r}
+df <- df[!df$person_id %in% c( 'C45','D19', 'F187'), ]
+```
+
+## 17. Adding up a sum across a row from a specific column to another one
+
+* In this example we are adding up total appointments from January to December AND we are speciying to count NA as 0
+
+
+* This example will work for consecutive columns
+
+```{r}
+df$total_appointments <-rowSums(subset(df, select=totalappointmentsJanuary:totalappointmentsDecember), na.rm=TRUE) * NA ^ (rowSums(!is.na((subset(df, select=totalappointmentsJanuary:totalappointmentsDecember))))==0)
+```
+
+## 18. Applying any operation to all of the dataframes in a list
+
+* Note that this returns a list of dataframes, without the original names
+
+
+* As before, you will need to assign back the orignal names if you want them
+
+```{r}
+df_list2 <-lapply(df_list1, function(df) {
+    
+    #any function here applied to df
+
+        return(df)
+})
+```
+
+## 19. Get unique list of person ids from multiple dataframes
+
+* This gets a list from each dataframe, combines the rows and drops duplicates
+
+```{r}
+# get list of pt_id who are 50+
+person1 <- df1 %>% select(person_id)
+person2 <- df2 %>% select(person_id)
+person3 <- df3 %>% select(person_id)
+
+# create master for adult social care filtering
+person_master <- rbind(person1, person2, person3)
+person_master <- distinct(person_master)
+```
+
+## 20. Assign the tax year to a date
+
+* There are multiple ways to assign a date to a tax year
+
+
+* This one requires that your date column is in date format
+
+
+* We use 1st April as start of tax year. This returns a string in format 2017/2018
+
+```{r}
+df$date = as.Date(df$date)
+
+# we use yearmon to extract the month and year and count forward 9 months to get the upper year of the tax year
+# we paste the upper year of the tax year minus 1, a forward slash, and the upper year of the tax year
+df$date <- paste0(as.integer(as.yearmon(df$date)+ 9/12)-1, '/', as.integer(as.yearmon(df$date)+ 9/12))
+```
+
+## 21. Drop rows with NA in one column
+
+```{r}
+df <- df %>% drop_na(age_cat)
+```
+
+## 22. Extract n characters as string from a field
+
+* Can use this like Excel function 'Right' or 'Left'
+
+
+* Use negative numbers to count from the right, or positive numbers to count from the left
+
+
+* In this example we extract the last 4 characters from the appointment date field and save in new variable
+
+```{r}
+df$appointment_year <- str_sub(df$appointment_date, -4, -1)
+```
+
+## 23. Append extra text to column names 
+
+* In this case we are skipping the first column
+
+
+* We append the suffix gp_ and the highest value of the year variable in this dataframe to each column
+
+
+* Note that we choose an underscore as a separator
+
+```{r}
+names(df)[-1] <- paste(names(df)[-1] , paste0("gp_", max(df$year)), sep = "_")
+```
+
+## 24. Count number of NA values across specified columns in each row of the dataframe 
+
+* In this example, we drop rows where count of NA is greater than a certain threshold
+
+
+* We want all columns including 'year_of_birth'
+
+
+* MARGIN = 1 means to apply the function across the row
+
+```{r}
+#first count na across year of birth cols as most likely to not be blank
+df$sums <- apply(df[,grepl ("^.+year_of_birth|^+year_of_birth|year_of_birth",names(df))], MARGIN = 1, function(x) sum(is.na(x)))
+                     
+# drop rows
+df1 <- df[(df$sums < 6),]                     
+```
+
+## 25. Sort dataframe columns alphabetically
+
+* Decereasing= FALSE is the default and means sort from A-Z, change to TRUE to sort from Z-A
+
+```{r}
+# order columns
+df <- df[,order(colnames(df), decreasing=FALSE)]  
+```
+
+## 26. Check min and max of each date column in a quick way
+
+* This creates a dataframe with the min and max of each field with date in the title
+
+
+* Note the use of the summarise_all function to apply summary function to each column
+
+
+* Note also the use of as.data.frame to store the results in a dataframe
+
+```{r}
+# checkfor nonsensical dates
+
+Max <-df[,grepl ("^.+date|^+date|date",names(df))] %>%
+    summarise_all(max, na.rm=TRUE) %>%
+    as.data.frame
+    Max$Measure = 'Max'
+
+Min <-df[,grepl ("^.+date|^+date|date",names(df))] %>%
+    summarise_all(min, na.rm=TRUE) %>%
+    as.data.frame
+    Min$Measure = 'Min'
+
+Sums <- rbind(Min, Max)
+
+Sums %>% select(Measure, everything())
+```
+
+## 27. Find the minimum or maximum value (numeric or dates) across columns in a dataframe row
+
+* Note we have used column numbers to refer to which columns we want to look at
+
+
+* FUN = min, but can put in any function here, max etc
+
+
+* na.rm=TRUE means we ignore columns with NA
+
+
+* We can just put 1, instead of writing out MARGIN=1
+
+```{r}
+df$lowest_value <- apply(df[, c(8:15,17:18) ], 1, FUN=min, na.rm=TRUE)
+```
+
+## 28. Find the nth lowest date or number across certain columns
+
+* Note that we can change to decreasing=TRUE for nth highest
+
+```{r}
+# functions for second and third lowest
+
+minn2<-function(x) x[order(x,decreasing=FALSE)[2]]
+
+minn3<-function(x) x[order(x,decreasing=FALSE)[3]]
+
+df$third_lowest_value <- apply(df[, c(8:15,17:18) ], 1, FUN=minn3)
+```
+
+## 29 - Find number of days/weeks/months between two dates (in date format)
+
+* Difftime can do seconds, minutes, hours, days, weeks
+
+
+* To get months or years, divide/ multiply appropriately but remember the word 'weeks' will still be attached
+
+
+* Here we have also rounded to 2 decimal places
+
+```{r}
+# number of weeks between
+df$how_many_days<- round((difftime(df$date_1,df$date_2 , units= 'weeks'),digits=2)
+
+# number of months between
+df$how_many_days<- round(((difftime(df$date_1,df$date_2 , units= 'weeks')/52)*12),digits=2)
+```
