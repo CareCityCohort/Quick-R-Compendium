@@ -1,2 +1,2 @@
-.ipynb linguist-language=R
-.ipynb linguist-vendored
+*.ipynb linguist-language=r
+*.ipynb linguist-vendored
